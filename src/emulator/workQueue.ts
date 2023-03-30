@@ -20,7 +20,7 @@ export type Work = {
 export class WorkQueue {
   private static MAX_PARALLEL_ENV = "FUNCTIONS_EMULATOR_PARALLEL";
   private static DEFAULT_MAX_PARALLEL = Number.parseInt(
-    utils.envOverride(WorkQueue.MAX_PARALLEL_ENV, "50")
+    utils.envOverride(WorkQueue.MAX_PARALLEL_ENV, "5")
   );
 
   private logger = EmulatorLogger.forEmulator(Emulators.FUNCTIONS);
@@ -102,7 +102,7 @@ export class WorkQueue {
     this.stopped = true;
   }
 
-  async flush(timeoutMs = 60000) {
+  async flush(timeoutMs = 6000) {
     if (!this.isWorking()) {
       return;
     }
@@ -147,7 +147,7 @@ export class WorkQueue {
       this.logState();
 
       try {
-        await next();
+        await Promise.race([next(), new Promise((res, rej) => setTimeout(() => rej(new Error("workQueue job timed out")), 3000)) ]);
       } catch (e: any) {
         this.logger.log("DEBUG", e);
       } finally {
