@@ -1,0 +1,1 @@
+{"version":3,"file":"global-mock-auth.js","sourceRoot":"","sources":["../../../src/test/helpers/global-mock-auth.ts"],"names":[],"mappings":";;AAAA,+BAA+B;AAE/B,yBAA8B;AAE9B,MAAM,WAAW,GAAG,KAAK,CAAC,aAAa,EAAE,CAAC;AAC1C,MAAM,CAAC,GAAG,EAAE;IACV,IAAA,WAAQ,EAAC,WAAW,CAAC,CAAC;AACxB,CAAC,CAAC,CAAC;AAEH,KAAK,CAAC,GAAG,EAAE;IACT,WAAW,CAAC,OAAO,EAAE,CAAC;AACxB,CAAC,CAAC,CAAC"}
