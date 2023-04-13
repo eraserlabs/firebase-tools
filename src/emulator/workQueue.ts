@@ -20,7 +20,7 @@ export type Work = {
 export class WorkQueue {
   private static MAX_PARALLEL_ENV = "FUNCTIONS_EMULATOR_PARALLEL";
   private static DEFAULT_MAX_PARALLEL = Number.parseInt(
-    utils.envOverride(WorkQueue.MAX_PARALLEL_ENV, "5")
+    utils.envOverride(WorkQueue.MAX_PARALLEL_ENV, "50")
   );
 
   private logger = EmulatorLogger.forEmulator(Emulators.FUNCTIONS);
