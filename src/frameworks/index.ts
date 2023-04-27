@@ -28,6 +28,7 @@ import { HostingRewrites } from "../firebaseConfig";
 import * as experiments from "../experiments";
 import { ensureTargeted } from "../functions/ensureTargeted";
 import { implicitInit } from "../hosting/implicitInit";
+import { fileExistsSync } from "../fsutils";
 
 // Use "true &&"" to keep typescript from compiling this file and rewriting
 // the import statement into a require
@@ -106,7 +107,7 @@ const SupportLevelWarnings = {
   ),
 };
 
-export const FIREBASE_FRAMEWORKS_VERSION = "^0.6.0";
+export const FIREBASE_FRAMEWORKS_VERSION = "^0.7.0";
 export const FIREBASE_FUNCTIONS_VERSION = "^3.23.0";
 export const FIREBASE_ADMIN_VERSION = "^11.0.1";
 export const NODE_VERSION = parseInt(process.versions.node, 10).toString();
@@ -124,14 +125,25 @@ const DEFAULT_FIND_DEP_OPTIONS: FindDepOptions = {
   omitDev: true,
 };
 
-const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
-
 export const WebFrameworks: Record<string, Framework> = Object.fromEntries(
   readdirSync(__dirname)
     .filter((path) => statSync(join(__dirname, path)).isDirectory())
-    .map((path) => [path, require(join(__dirname, path))])
+    .map((path) => {
+      // If not called by the CLI, (e.g., by the VS Code Extension)
+      // __dirname won't refer to this folder and these files won't be available.
+      // Instead it may find sibling folders that aren't modules, and this
+      // require will throw.
+      // Long term fix may be to bundle this instead of reading files at runtime
+      // but for now, this prevents crashing.
+      try {
+        return [path, require(join(__dirname, path))];
+      } catch (e) {
+        return [];
+      }
+    })
     .filter(
-      ([, obj]) => obj.name && obj.discover && obj.build && obj.type !== undefined && obj.support
+      ([, obj]) =>
+        obj && obj.name && obj.discover && obj.build && obj.type !== undefined && obj.support
     )
 );
 
@@ -233,15 +245,30 @@ function scanDependencyTree(searchingFor: string, dependencies = {}): any {
   return;
 }
 
+export function getNodeModuleBin(name: string, cwd: string) {
+  const cantFindExecutable = new FirebaseError(`Could not find the ${name} executable.`);
+  const npmRoot = spawnSync("npm", ["root"], { cwd }).stdout?.toString().trim();
+  if (!npmRoot) {
+    throw cantFindExecutable;
+  }
+  const path = join(npmRoot, ".bin", name);
+  if (!fileExistsSync(path)) {
+    throw cantFindExecutable;
+  }
+  return path;
+}
+
 /**
  *
  */
 export function findDependency(name: string, options: Partial<FindDepOptions> = {}) {
-  const { cwd, depth, omitDev } = { ...DEFAULT_FIND_DEP_OPTIONS, ...options };
+  const { cwd: dir, depth, omitDev } = { ...DEFAULT_FIND_DEP_OPTIONS, ...options };
+  const cwd = spawnSync("npm", ["root"], { cwd: dir }).stdout?.toString().trim();
+  if (!cwd) return;
   const env: any = Object.assign({}, process.env);
   delete env.NODE_ENV;
   const result = spawnSync(
-    NPM_COMMAND,
+    "npm",
     [
       "list",
       name,
@@ -391,9 +418,14 @@ export async function prepareFrameworks(
         }
       }
     }
-    if (firebaseDefaults) process.env.__FIREBASE_DEFAULTS__ = JSON.stringify(firebaseDefaults);
+    if (firebaseDefaults) {
+      process.env.__FIREBASE_DEFAULTS__ = JSON.stringify(firebaseDefaults);
+    }
     const results = await discover(getProjectPath());
-    if (!results) throw new Error("Epic fail.");
+    if (!results)
+      throw new FirebaseError(
+        "Unable to detect the web framework in use, check firebase-debug.log for more info."
+      );
     const { framework, mayWantBackend, publicDirectory } = results;
     const {
       build,
@@ -442,7 +474,10 @@ export async function prepareFrameworks(
     }
     config.webFramework = `${framework}${codegenFunctionsDirectory ? "_ssr" : ""}`;
     if (codegenFunctionsDirectory) {
-      if (firebaseDefaults) firebaseDefaults._authTokenSyncURL = "/__session";
+      if (firebaseDefaults) {
+        firebaseDefaults._authTokenSyncURL = "/__session";
+        process.env.__FIREBASE_DEFAULTS__ = JSON.stringify(firebaseDefaults);
+      }
 
       const rewrite: HostingRewrites = {
         source: "**",
@@ -564,7 +599,7 @@ ${firebaseDefaults ? `__FIREBASE_DEFAULTS__=${JSON.stringify(firebaseDefaults)}\
 
       await Promise.all(envs.map((path) => copyFile(path, join(functionsDist, basename(path)))));
 
-      execSync(`${NPM_COMMAND} i --omit dev --no-audit`, {
+      execSync(`npm i --omit dev --no-audit`, {
         cwd: functionsDist,
         stdio: "inherit",
       });
@@ -624,54 +659,4 @@ ${firebaseDefaults ? `__FIREBASE_DEFAULTS__=${JSON.stringify(firebaseDefaults)}\
 function codegenDevModeFunctionsDirectory() {
   const packageJson = {};
   return Promise.resolve({ packageJson, frameworksEntry: "_devMode" });
-}
-
-/**
- *
- */
-export function createServerResponseProxy(
-  req: IncomingMessage,
-  res: ServerResponse,
-  next: () => void
-) {
-  const proxiedRes = new ServerResponse(req);
-  const buffer: [string, any[]][] = [];
-  proxiedRes.write = new Proxy(proxiedRes.write.bind(proxiedRes), {
-    apply: (target: any, thisArg, args) => {
-      target.call(thisArg, ...args);
-      buffer.push(["write", args]);
-    },
-  });
-  proxiedRes.setHeader = new Proxy(proxiedRes.setHeader.bind(proxiedRes), {
-    apply: (target: any, thisArg, args) => {
-      target.call(thisArg, ...args);
-      buffer.push(["setHeader", args]);
-    },
-  });
-  proxiedRes.removeHeader = new Proxy(proxiedRes.removeHeader.bind(proxiedRes), {
-    apply: (target: any, thisArg, args) => {
-      target.call(thisArg, ...args);
-      buffer.push(["removeHeader", args]);
-    },
-  });
-  proxiedRes.writeHead = new Proxy(proxiedRes.writeHead.bind(proxiedRes), {
-    apply: (target: any, thisArg, args) => {
-      target.call(thisArg, ...args);
-      buffer.push(["writeHead", args]);
-    },
-  });
-  proxiedRes.end = new Proxy(proxiedRes.end.bind(proxiedRes), {
-    apply: (target: any, thisArg, args) => {
-      target.call(thisArg, ...args);
-      if (proxiedRes.statusCode === 404) {
-        next();
-      } else {
-        for (const [fn, args] of buffer) {
-          (res as any)[fn](...args);
-        }
-        res.end(...args);
-      }
-    },
-  });
-  return proxiedRes;
 }
